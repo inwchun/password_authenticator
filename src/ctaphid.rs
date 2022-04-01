@@ -94,8 +94,8 @@ pub struct InitResponse {
     capabilities: u8,
 }
 
-const AAGUID: u128 = 0x7ec96c58403748ed8e7eb2a1b538374e;
-//const AAGUID: u128 = 0x0;
+// const AAGUID: u128 = 0x7ec96c58403748ed8e7eb2a1b538374e;
+const AAGUID: u128 = 0x0;
 
 #[allow(dead_code)]
 type Cbor = serde_cbor::value::Value;
@@ -151,8 +151,8 @@ struct PublicKeyCredentialParameters {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct PublicKeyCredentialDescriptor {
-    r#type: String,
     id: Bytes,
+    r#type: String,
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     transports: Vec<String>,
@@ -206,7 +206,7 @@ fn options_default () -> GetAssertionOptions {
 }
 fn up_default () -> bool { options_default().up }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct GetAssertionResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     _marker: Option<()>,
@@ -647,7 +647,7 @@ Allow? ",
                 return self.send_error(ERR_INVALID_PAR, q)
             }
         };
-        log!("get_assertion {:?}", args);
+        // log!("get_assertion {:?}", args);
         assert!(args.allow_list.len() == 1);
         let credential_id: CredentialId = match serde_cbor::from_slice
             (&args.allow_list[0].id.0) {
@@ -709,15 +709,35 @@ Allow?",
         ].concat();
         let data = [&auth_data[..], &args.client_data_hash.0].concat();
         let signature = self.token.sign(wpriv_key, &data)?;
+        log!("{:?}", serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?);
+        log!("{:?}", serde_cbor::ser::to_vec(&args.allow_list[0].clone())?);
+        log!("{:?}", serde_cbor::ser::to_vec_packed(&Bytes(auth_data.clone()))?);
+        log!("{:?}", serde_cbor::ser::to_vec_packed(&Bytes(signature.clone()))?);
+        log!("{:?}", serde_cbor::ser::to_vec_packed(&1)?);
+        let credential_cbor_packed = serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?;
+        let credential_cbor = serde_cbor::ser::to_vec(&args.allow_list[0].clone())?;
         let response = GetAssertionResponse {
             _marker: None,
+            credential: Some(args.allow_list[0].clone()),
             auth_data: Bytes(auth_data),
             signature: Bytes(signature),
-            credential: None,
-            number_of_credentials: Some(1),
             user: None,
+            number_of_credentials: Some(1),
         };
-        let cbor = serde_cbor::ser::to_vec_packed(&response)?;
+        let mut cbor = serde_cbor::ser::to_vec_packed(&response)?;
+        cbor.splice(2..(credential_cbor_packed.len()+2), credential_cbor);
+        log!("{:?}", serde_cbor::ser::to_vec_packed(&response)?);
+        log!("{:?}", cbor);
+        // log!("{:?}", serde_cbor::ser::to_writer(&response,&response)?);
+        // log!("{:?}", cbor);
+        // let args: GetAssertionResponse = match serde_cbor::from_slice(&cbor) {
+        //     Ok(x) => x,
+        //     Err(e) => {
+        //         log!("failed to parse cbor: {}", e);
+        //         return self.send_error(ERR_INVALID_PAR, q)
+        //     }
+        // };
+        // log!("{:?}", args);
         self.send_cbor_reply(&cbor, q)
     }
 
