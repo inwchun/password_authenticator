@@ -9,7 +9,6 @@ use std::collections::VecDeque;
 use packed_struct::PackedStruct;
 use std::time::Duration;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::convert::TryInto;
 
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 type Q = VecDeque<Vec<u8>>;
@@ -589,9 +588,6 @@ Allow? ",
             wrapped_private_key: Bytes(wrapped_priv_key.to_vec()),
             encrypted_rp_id: Bytes(self.token.encrypt(&rp_id)?),
         })?;
-        let arr :[u8;32] =  self.token.sha256_hash(rp_id)?.try_into().expect("slice with incorrect length");
-        log!("{:?}", arr);
-        log!("{:?}", hash_sha256(rp_id));
         Ok([&self.token.sha256_hash(rp_id)?[..],
             &[flags],
             &counter.to_be_bytes(),
