@@ -4,6 +4,16 @@ use pkcs11::types::*;
 use chrono::{DateTime, Utc};
 use cookie_factory;
 use crate::prompt;
+use std::convert::TryInto;
+
+use sha2::{Sha256, Digest};
+
+pub fn hash_sha256(data: &[u8]) -> [u8; 32] {
+    let result: [u8;32] = Sha256::digest(data).as_slice()
+                            .try_into().expect("wrong length");
+    result
+}
+
 
 pub struct KeyStore<'a> {
     ctx: &'a Ctx,

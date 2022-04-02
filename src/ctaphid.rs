@@ -1,6 +1,7 @@
 
 use crate::prompt;
 use crate::crypto;
+use crate::crypto::{hash_sha256};
 use serde::{Serialize, Serializer, Deserialize, Deserializer,
             ser::SerializeMap};
 use std::cmp::min;
@@ -8,6 +9,7 @@ use std::collections::VecDeque;
 use packed_struct::PackedStruct;
 use std::time::Duration;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::convert::TryInto;
 
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 type Q = VecDeque<Vec<u8>>;
@@ -46,7 +48,7 @@ const CTAPHID_CBOR: u8 = 0x10;
 const CTAPHID_MSG: u8 = 0x03;
 const CTAPHID_ERROR: u8 = 0x3F;
 const CTAPHID_KEEPALIVE: u8 = 0x3B;
-const CTAPHID_VENDOR_FIRST: u8 = (0x40);
+const CTAPHID_VENDOR_FIRST: u8 = 0x40;
 const HACK_CHECK_STATUS: u8 = CTAPHID_VENDOR_FIRST + 10;
 
 //const CAPABILITY_WINK: u8 = 0x01;
@@ -587,6 +589,9 @@ Allow? ",
             wrapped_private_key: Bytes(wrapped_priv_key.to_vec()),
             encrypted_rp_id: Bytes(self.token.encrypt(&rp_id)?),
         })?;
+        let arr :[u8;32] =  self.token.sha256_hash(rp_id)?.try_into().expect("slice with incorrect length");
+        log!("{:?}", arr);
+        log!("{:?}", hash_sha256(rp_id));
         Ok([&self.token.sha256_hash(rp_id)?[..],
             &[flags],
             &counter.to_be_bytes(),
@@ -771,7 +776,7 @@ Allow?",
                 },
                 _ => None
             }
-        };
+        }
         match (&data[..4], payload (&data[4..])) {
             ([0, 3, 0, 0], Some(( 0, _, 0))) => self.u2f_version(q),
             ([0, 1, p1,0], Some((64, d, 0))) if [0, 3].contains(&p1) =>
