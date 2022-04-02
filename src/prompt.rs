@@ -22,6 +22,8 @@ pub fn yes_or_no_p(prompt: &str)
     std::thread::spawn(move || {
         let peb = pinentry_rs::pinentry().description(escaped);
         let r = peb.confirm_yes_no();
+        // let r2 = peb.pin((&"hi").to_string()).unwrap();
+        // log!("{}",String::from_utf8(r2.unsecure().to_vec()).unwrap());
         sender.send(r)//.unwrap()
     });
     receiver
