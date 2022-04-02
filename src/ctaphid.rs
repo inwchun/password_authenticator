@@ -582,13 +582,13 @@ Allow? ",
     fn build_auth_data(&self, rp_id: &[u8],
                        wrapped_priv_key: &[u8],
                        pub_key_cose: &[u8]) -> R<Vec<u8>> {
-        let counter: u32 = self.token.increment_token_counter()?;
+        let counter: u32 = 0;
         let flags: u8 = 1<<0|1<<6;
         let credential_id = serde_cbor::ser::to_vec_packed(&CredentialId{
             wrapped_private_key: Bytes(wrapped_priv_key.to_vec()),
             encrypted_rp_id: Bytes(self.token.encrypt(&rp_id)?),
         })?;
-        Ok([&self.token.sha256_hash(rp_id)?[..],
+        Ok([&hash_sha256(rp_id)[..],
             &[flags],
             &counter.to_be_bytes(),
             &AAGUID.to_le_bytes(),
@@ -701,9 +701,9 @@ Allow?",
         let credential_id = serde_cbor::from_slice::<CredentialId>
             (&args.allow_list[0].id.0).unwrap();
         let wpriv_key = &credential_id.wrapped_private_key.0;
-        let counter = self.token.increment_token_counter()?;
+        let counter :u32 = 0;
         let auth_data: Vec<u8> = [
-            &self.token.sha256_hash(args.rp_id.as_bytes())?[..],
+            &hash_sha256(args.rp_id.as_bytes())[..],
             &vec!(1<<0|  // User Present (UP) result
                   0<<6), // Attested credential data included (AT).
             &counter.to_be_bytes(),
@@ -879,7 +879,7 @@ Allow?",
                     Ok(Err(e)) => panic!("Receive consent: {:?}", e),
                 }
                 let presence = 1u8;
-                let counter = self.token.increment_token_counter()?;
+                let counter :u32 = 0;
                 let sig = self.token.sign(wpriv,
                                           &[application,
                                             &[presence],
