@@ -5,7 +5,13 @@ use chrono::{DateTime, Utc};
 use cookie_factory;
 use crate::prompt;
 use std::convert::TryInto;
-
+use openssl::ec::{
+    EcKey, EcGroup, EcPoint, PointConversionForm, EcPointRef
+};
+use openssl::ecdsa::EcdsaSig;
+use openssl::pkey::Private;
+use openssl::bn::{BigNum, BigNumContext};
+use openssl::nid::Nid;
 use sha2::{Sha256, Digest};
 
 pub fn hash_sha256(data: &[u8]) -> [u8; 32] {
@@ -13,6 +19,35 @@ pub fn hash_sha256(data: &[u8]) -> [u8; 32] {
                             .try_into().expect("wrong length");
     result
 }
+
+pub fn generate_privkey(scalar: &[u8]) -> EcKey<Private> {
+    //TODO: mod and if 0
+    let ecgroup = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let bignum = BigNum::from_slice(scalar).unwrap();
+    let mut ecpoint = EcPoint::new(&ecgroup).unwrap();
+    let mut bignumctx = BigNumContext::new().unwrap();
+    EcPointRef::mul_generator(&mut ecpoint, &ecgroup, &bignum, &bignumctx).unwrap();
+    let privkey = EcKey::from_private_components(&ecgroup, &bignum, &ecpoint).unwrap();
+    privkey
+}
+
+pub fn get_pubkey(privkey:  EcKey<Private>) -> (Vec<u8>, Vec<u8>) {
+    let ecgroup = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let pubkey = privkey.public_key();
+    let mut bignumctx = BigNumContext::new().unwrap();
+    let form = PointConversionForm::UNCOMPRESSED;
+    let point = pubkey.to_bytes(&ecgroup, form, &mut bignumctx).unwrap();
+    log!("point2: {:?}", point);
+    xy_point(&point)
+}
+
+pub fn prove(privkey: EcKey<Private>, message: &[u8]) -> Vec<u8> {
+    let signature = EcdsaSig::sign(message, &privkey).unwrap();
+    let r = signature.r().to_vec();
+    let s = signature.s().to_vec();
+    encode_signature(&r, &s)
+}
+
 
 
 pub struct KeyStore<'a> {
@@ -179,6 +214,13 @@ fn ec_point_x_y (point: &[u8]) -> (Vec<u8>, Vec<u8>) {
     (x, y)
 }
 
+fn xy_point (point: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    assert!(point.len() == 65, "invalid length");
+    assert!(point[0] == 0x04, "point not in uncompressed format");
+    let (x, y) = (point[1..32].to_vec(), point[32..].to_vec());
+    (x, y)
+}
+
 // Set all elements to 0
 fn zero(data: &mut [u8]) {
     for i in 0..data.len() {
@@ -214,6 +256,28 @@ fn der_encode_signature (points: &[u8]) -> Vec<u8> {
     out[1] = out.len() as u8 - 2;
     out
 }
+
+fn encode_signature (r: &[u8], s: &[u8]) -> Vec<u8> {
+    assert!(r.len() == 64);
+    assert!(s.len() == 64);
+    fn encode_integer (mut int: &[u8], out: &mut Vec<u8>) {
+        out.push(0x02);
+        int = &int[int.iter().position(|&i| i != 0).unwrap() ..];
+        if int[0] & 0x80 != 0 {   // would be interpreted as sign flag
+            out.push(int.len() as u8 + 1); // so insert an extra zero
+            out.push(0);
+        } else {
+            out.push(int.len() as u8);
+        };
+        out.extend_from_slice(int)
+    }
+    let mut out = vec![0x30u8, 0];
+    encode_integer(r, &mut out);
+    encode_integer(s, &mut out);
+    out[1] = out.len() as u8 - 2;
+    out
+}
+
 
 // shorthand for mechanism without paramaters.
 fn mechanism(mechanism: CK_MECHANISM_TYPE) -> CK_MECHANISM {

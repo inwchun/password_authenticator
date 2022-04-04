@@ -710,11 +710,6 @@ Allow?",
         ].concat();
         let data = [&auth_data[..], &args.client_data_hash.0].concat();
         let signature = self.token.sign(wpriv_key, &data)?;
-        log!("{:?}", serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?);
-        log!("{:?}", serde_cbor::ser::to_vec(&args.allow_list[0].clone())?);
-        log!("{:?}", serde_cbor::ser::to_vec_packed(&Bytes(auth_data.clone()))?);
-        log!("{:?}", serde_cbor::ser::to_vec_packed(&Bytes(signature.clone()))?);
-        log!("{:?}", serde_cbor::ser::to_vec_packed(&1)?);
         let credential_cbor_packed = serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?;
         let credential_cbor = serde_cbor::ser::to_vec(&args.allow_list[0].clone())?;
         let response = GetAssertionResponse {
