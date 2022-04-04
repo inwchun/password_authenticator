@@ -147,7 +147,7 @@ impl std::error::Error for RequestError {
     }
 }
 
-pub struct Device<'a> {
+pub struct Device {
     device_descriptor: usb_device_descriptor,
     config_descriptor: usb_config_descriptor,
     interface_descriptor: usb_interface_descriptor,
@@ -155,12 +155,12 @@ pub struct Device<'a> {
     hid_report_descriptor: Vec<u8>,
     endpoint_descriptors: Vec<usb_endpoint_descriptor>,
     strings: Vec<&'static str>,
-    parser: ctaphid::Parser<'a>,
+    parser: ctaphid::Parser,
 }
 
-impl<'a> Device<'a> {
+impl Device {
 
-    pub fn new(token: &'a crypto::KeyStore) -> Self {
+    pub fn new() -> Self {
         let hid_report_descriptor: Vec<u8> = {
             use hid::*;
             [usage_page(FIDO),
@@ -282,7 +282,7 @@ impl<'a> Device<'a> {
                 "Default Config",
                 "The Interface",
             ],
-            parser: ctaphid::Parser::new(token),
+            parser: ctaphid::Parser::new(),
         }
     }
 

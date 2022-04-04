@@ -13,6 +13,13 @@ use openssl::pkey::Private;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::nid::Nid;
 use sha2::{Sha256, Digest};
+use openssl::rand::rand_bytes;
+
+pub fn get_random() -> Vec<u8> {
+    let mut bytes : Vec<u8> = [0u8;32].to_vec();
+    rand_bytes(&mut bytes);
+    bytes.to_vec()
+}
 
 pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
     let result = Sha256::digest(data).to_vec();
@@ -30,7 +37,7 @@ pub fn generate_privkey(scalar: &[u8]) -> EcKey<Private> {
     privkey
 }
 
-pub fn get_pubkey(privkey:  EcKey<Private>) -> (Vec<u8>, Vec<u8>) {
+pub fn get_pubkey(privkey:  &EcKey<Private>) -> (Vec<u8>, Vec<u8>) {
     let ecgroup = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
     let pubkey = privkey.public_key();
     let mut bignumctx = BigNumContext::new().unwrap();

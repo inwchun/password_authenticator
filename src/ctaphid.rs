@@ -1,7 +1,7 @@
 
 use crate::prompt;
 use crate::crypto;
-use crate::crypto::{hash_sha256};
+use crate::crypto::{get_random, hash_sha256, get_pubkey, generate_privkey, prove};
 use serde::{Serialize, Serializer, Deserialize, Deserializer,
             ser::SerializeMap};
 use std::cmp::min;
@@ -9,20 +9,20 @@ use std::collections::VecDeque;
 use packed_struct::PackedStruct;
 use std::time::Duration;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use openssl::ec::EcKey;
+use openssl::pkey::Private;
 
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 type Q = VecDeque<Vec<u8>>;
 
-pub struct Parser<'a> {
+pub struct Parser {
     pub send_queue: Q,
     pub recv_queue: Q,
-    token: &'a crypto::KeyStore<'a>,
-    channels: Vec<Channel<'a>>
+    channels: Vec<Channel>,
 }
 
-struct Channel<'a> {
+struct Channel {
     cid: u32,
-    token: &'a crypto::KeyStore<'a>,
     state: State,  
 }
 
@@ -223,8 +223,7 @@ struct GetAssertionResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CredentialId {
-    wrapped_private_key: Bytes,
-    encrypted_rp_id: Bytes,
+    public_parameter: Bytes,
 }
 
 impl Serialize for CoseKey {
@@ -278,14 +277,13 @@ impl<'de> serde::de::Visitor<'de> for BytesVisitor {
 
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
 
-    pub fn new (token: &'a crypto::KeyStore) -> Self {
+    pub fn new () -> Self {
         Self {
             channels: vec![],
             send_queue: VecDeque::new(),
             recv_queue: VecDeque::new(),
-            token: token,
         }
     }
 
@@ -352,9 +350,8 @@ impl<'a> Parser<'a> {
     
     fn allocate_channel(&mut self, nonce: u64) -> R<()> {
         let cid = self.channels.len() as u32;
-        let channel = Channel::<'a>{ cid: cid,
+        let channel = Channel { cid: cid,
                                      state: State::Init,
-                                     token: self.token,
         };
         self.channels.push(channel);
         let response = InitResponse {
@@ -399,7 +396,7 @@ fn send_reply(queue: &mut Q, cid: u32, cmd: u8, data: &[u8]) -> R<()> {
     Ok(())
 }
 
-impl<'a> Channel<'a> {
+impl Channel{
 
     fn parse (&mut self, pkt: &[u8], q: &mut Q) -> R<()> {
         use State::*;
@@ -476,7 +473,7 @@ impl<'a> Channel<'a> {
             //CTAPHID_INIT => self.init_cmd (data),
             CTAPHID_PING => self.ping_cmd(data, q),
             CTAPHID_CBOR => self.cbor_cmd(data, q),
-            CTAPHID_MSG => self.msg_cmd(data, q),
+            // CTAPHID_MSG => self.msg_cmd(data, q),
             CTAPHID_CANCEL => Ok(()), // Ignored, as per spec.
             _ => {
                 let _ = self.send_error (ERR_INVALID_CMD, q);
@@ -580,13 +577,12 @@ Allow? ",
     }
 
     fn build_auth_data(&self, rp_id: &[u8],
-                       wrapped_priv_key: &[u8],
+                       privkey: &EcKey<Private>,
                        pub_key_cose: &[u8]) -> R<Vec<u8>> {
         let counter: u32 = 0;
         let flags: u8 = 1<<0|1<<6;
         let credential_id = serde_cbor::ser::to_vec_packed(&CredentialId{
-            wrapped_private_key: Bytes(wrapped_priv_key.to_vec()),
-            encrypted_rp_id: Bytes(self.token.encrypt(&rp_id)?),
+            public_parameter: Bytes([0;32].to_vec()),
         })?;
         Ok([&hash_sha256(rp_id)[..],
             &[flags],
@@ -600,8 +596,9 @@ Allow? ",
 
     fn make_credential_3 (&mut self, q: &mut Q) -> R<()>
     {
-        let (privk, pubk) = self.token.generate_key_pair()
-            .unwrap_or_else(|e| panic!("generate_key_pair failed: {}", e));
+        let r_k = get_random();
+        let privkey = generate_privkey(&r_k);
+        let pubkey = get_pubkey(&privkey);
         let args = match &self.state {
             State::MakeCredential { args, .. } => args,
             _ => panic!()
@@ -609,11 +606,11 @@ Allow? ",
         assert!(!args.options.rk);
         let pub_key_cose = serde_cbor::ser::to_vec_packed(&CoseKey {
                 kty: 2, alg: -7, crv: 1,
-                x: Bytes(pubk.0),
-                y: Bytes(pubk.1)
+                x: Bytes(pubkey.0),
+                y: Bytes(pubkey.1)
         })?;
         let auth_data = self.build_auth_data(args.rp.id.as_bytes(),
-                                             &privk, &pub_key_cose)?;
+                                             &privkey, &pub_key_cose)?;
         let att_obj = MakeCredentialResponse {
             _marker: None,
             fmt: "none".to_string(),
@@ -656,11 +653,11 @@ Allow? ",
                 Err(_) => return self.send_cbor_error(ERR_INVALID_CREDENTIAL,
                                                       q)
             };
-        match (self.token.decrypt(&credential_id.encrypted_rp_id.0),
-               args.rp_id.as_bytes()) {
-            (Ok(id1), id2) if id1 == id2 => (),
-            _ => return self.send_cbor_error(ERR_INVALID_CREDENTIAL, q),
-        };
+        // match (self.token.decrypt(&credential_id.public_parameter),
+        //        args.rp_id.as_bytes()) {
+        //     (Ok(id1), id2) if id1 == id2 => (),
+        //     _ => return self.send_cbor_error(ERR_INVALID_CREDENTIAL, q),
+        // };
         let prompt = format!(
             "Consent needed for signing challange
 
@@ -700,7 +697,8 @@ Allow?",
         };
         let credential_id = serde_cbor::from_slice::<CredentialId>
             (&args.allow_list[0].id.0).unwrap();
-        let wpriv_key = &credential_id.wrapped_private_key.0;
+        log!("cid: {:?}", credential_id.public_parameter.0);
+        let privkey = generate_privkey(&credential_id.public_parameter.0);
         let counter :u32 = 0;
         let auth_data: Vec<u8> = [
             &hash_sha256(args.rp_id.as_bytes())[..],
@@ -709,7 +707,7 @@ Allow?",
             &counter.to_be_bytes(),
         ].concat();
         let data = [&auth_data[..], &args.client_data_hash.0].concat();
-        let signature = self.token.sign(wpriv_key, &data)?;
+        let signature =  prove(privkey, &data);
         let credential_cbor_packed = serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?;
         let credential_cbor = serde_cbor::ser::to_vec(&args.allow_list[0].clone())?;
         let response = GetAssertionResponse {
@@ -752,143 +750,138 @@ Allow?",
         self.make_credential_cancel(q) // does the same
     }
 
-    fn msg_cmd(&mut self, data: &[u8], q: &mut Q) -> R<()> {
-        log!("msg_cmd");
-        fn payload (data: &[u8]) -> Option<(u16, &[u8], u16)> {
-            match data[..3] {
-                [0, n2, n1] => {
-                    let nc = u16::from_be_bytes([n2, n1]);
-                    let end = 3+nc as usize;
-                    let lc = match data[end..] {
-                        [l2, l1] => u16::from_be_bytes([l2, l1]),
-                        _ => return None
-                    };
-                    Some((nc, &data[3..end], lc))
-                },
-                _ => None
-            }
-        }
-        match (&data[..4], payload (&data[4..])) {
-            ([0, 3, 0, 0], Some(( 0, _, 0))) => self.u2f_version(q),
-            ([0, 1, p1,0], Some((64, d, 0))) if [0, 3].contains(&p1) =>
-                self.u2f_register(d, q),
-            ([0, 2, p1,0], Some((_, d, 0))) if [3,7,8].contains(&p1) =>
-                self.u2f_authenticate(*p1, d, q),
-            _ => panic!("msg_cmd nyi {:?}", data)
-        }
-    }
+    // fn msg_cmd(&mut self, data: &[u8], q: &mut Q) -> R<()> {
+    //     log!("msg_cmd");
+    //     fn payload (data: &[u8]) -> Option<(u16, &[u8], u16)> {
+    //         match data[..3] {
+    //             [0, n2, n1] => {
+    //                 let nc = u16::from_be_bytes([n2, n1]);
+    //                 let end = 3+nc as usize;
+    //                 let lc = match data[end..] {
+    //                     [l2, l1] => u16::from_be_bytes([l2, l1]),
+    //                     _ => return None
+    //                 };
+    //                 Some((nc, &data[3..end], lc))
+    //             },
+    //             _ => None
+    //         }
+    //     }
+    //     match (&data[..4], payload (&data[4..])) {
+    //         ([0, 3, 0, 0], Some(( 0, _, 0))) => self.u2f_version(q),
+    //         ([0, 1, p1,0], Some((64, d, 0))) if [0, 3].contains(&p1) =>
+    //             self.u2f_register(d, q),
+    //         ([0, 2, p1,0], Some((_, d, 0))) if [3,7,8].contains(&p1) =>
+    //             self.u2f_authenticate(*p1, d, q),
+    //         _ => panic!("msg_cmd nyi {:?}", data)
+    //     }
+    // }
 
-    fn u2f_version(&mut self, q: &mut Q) -> R<()> {
-        let data: Vec<u8> = ["U2F_V2".as_bytes(),
-                             &SW_NO_ERROR.to_be_bytes()].concat();
-        log!("u2f_version => {:?}", &data);
-        send_reply(q, self.cid, CTAPHID_MSG, &data)
-    }
+    // fn u2f_version(&mut self, q: &mut Q) -> R<()> {
+    //     let data: Vec<u8> = ["U2F_V2".as_bytes(),
+    //                          &SW_NO_ERROR.to_be_bytes()].concat();
+    //     log!("u2f_version => {:?}", &data);
+    //     send_reply(q, self.cid, CTAPHID_MSG, &data)
+    // }
 
-    fn u2f_register(&mut self, data: &[u8], q: &mut Q) -> R<()> {
-        log!("u2f_register: {:?}", &data);
-        assert!(data.len() == 64);
-        let challenge = &data[0..32];
-        let application = &data[32..];
-        let consent = prompt::yes_or_no_p("Allow U2F registeration?");
-        match consent.recv_timeout(Duration::from_millis(10000)) {
-            Ok(Ok(true)) => (),
-            Ok(Ok(false)) |
-            Err(RecvTimeoutError::Disconnected) |
-            Err(RecvTimeoutError::Timeout) => 
-                return send_reply(q, self.cid, CTAPHID_MSG,
-                                  &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes()),
-            Ok(Err(e)) => panic!("Receive consent: {:?}", e),
-        }
-        let (wpriv, (x, y)) = self.token.generate_key_pair()?;
-        let pub_key = [&[4u8][..], &x, &y].concat();
-        assert!(pub_key.len() == 65);
-        assert!(wpriv.len() <= 255);
-        let credential_id = CredentialId {
-            wrapped_private_key: Bytes(wpriv.clone()),
-            encrypted_rp_id: Bytes(self.token.encrypt(&application)?),
-        };
-        println!("credential_id: {:?}", &credential_id);
-        println!("application: {:?}", &application);
-        let key_handle = serde_cbor::ser::to_vec_packed(&credential_id)?;
-        let signature = self.token.sign(&wpriv,
-                                        &[&[0u8][..],
-                                          application,
-                                          challenge,
-                                          &key_handle,
-                                          &pub_key,].concat())?;
-        let not_before = chrono::Utc::now();
-        let not_after = not_before + chrono::Duration::days(30);
-        let cert = self.token.create_certificate(&wpriv, &pub_key,
-                                                 "Fakecompany", "Fakecompany",
-                                                 not_before, Some(not_after))?;
-        let result = [&[5u8][..], // reserved byte 5
-                      &pub_key,
-                      &[key_handle.len() as u8],
-                      &key_handle,
-                      &cert,
-                      &signature,
-                      &SW_NO_ERROR.to_be_bytes()].concat();
-        send_reply(q, self.cid, CTAPHID_MSG, &result)
-    }
+    // fn u2f_register(&mut self, data: &[u8], q: &mut Q) -> R<()> {
+    //     log!("u2f_register: {:?}", &data);
+    //     assert!(data.len() == 64);
+    //     let challenge = &data[0..32];
+    //     let application = &data[32..];
+    //     let consent = prompt::yes_or_no_p("Allow U2F registeration?");
+    //     match consent.recv_timeout(Duration::from_millis(10000)) {
+    //         Ok(Ok(true)) => (),
+    //         Ok(Ok(false)) |
+    //         Err(RecvTimeoutError::Disconnected) |
+    //         Err(RecvTimeoutError::Timeout) => 
+    //             return send_reply(q, self.cid, CTAPHID_MSG,
+    //                               &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes()),
+    //         Ok(Err(e)) => panic!("Receive consent: {:?}", e),
+    //     }
+    //     let (wpriv, (x, y)) = self.token.generate_key_pair()?;
+    //     let pub_key = [&[4u8][..], &x, &y].concat();
+    //     assert!(pub_key.len() == 65);
+    //     assert!(wpriv.len() <= 255);
+    //     let credential_id = CredentialId {
+    //         public_parameter: Bytes(wpriv.clone()),
+    //     };
+    //     let key_handle = serde_cbor::ser::to_vec_packed(&credential_id)?;
+    //     let signature = self.token.sign(&wpriv,
+    //                                     &[&[0u8][..],
+    //                                       application,
+    //                                       challenge,
+    //                                       &key_handle,
+    //                                       &pub_key,].concat())?;
+    //     let not_before = chrono::Utc::now();
+    //     let not_after = not_before + chrono::Duration::days(30);
+    //     let cert = self.token.create_certificate(&wpriv, &pub_key,
+    //                                              "Fakecompany", "Fakecompany",
+    //                                              not_before, Some(not_after))?;
+    //     let result = [&[5u8][..], // reserved byte 5
+    //                   &pub_key,
+    //                   &[key_handle.len() as u8],
+    //                   &key_handle,
+    //                   &cert,
+    //                   &signature,
+    //                   &SW_NO_ERROR.to_be_bytes()].concat();
+    //     send_reply(q, self.cid, CTAPHID_MSG, &result)
+    // }
 
-    fn u2f_authenticate(&mut self, control: u8, data: &[u8], q: &mut Q)
-                        -> R<()> {
-        log!("u2f_authenticate: 0x{:0x} {:?}", control, &data);
-        let challange = &data[..32];
-        let application = &data[32..64];
-        let l = data[64];
-        let key_handle = &data[65..];
-        assert!(key_handle.len() == l as usize);
-        let credential_id: CredentialId =
-            match serde_cbor::from_slice (key_handle) {
-                Ok(x) => x,
-                _ => return send_reply(q, self.cid, CTAPHID_MSG,
-                                       &SW_WRONG_DATA.to_be_bytes()),
-            };
-        println!("credential_id = {:?}", &credential_id);
-        println!("application: {:?}", &application);
-        let wpriv = &credential_id.wrapped_private_key.0;
-        assert!(self.token.is_valid_id(wpriv));
-        match self.token.decrypt(&credential_id.encrypted_rp_id.0) {
-            Ok(rp_id) if rp_id == application => (),
-            _ => return send_reply(q, self.cid, CTAPHID_MSG,
-                                   &SW_WRONG_DATA.to_be_bytes()),
-        };
-        match control {
-            7 => {
-                let code = SW_CONDITIONS_NOT_SATISFIED;
-                send_reply(q, self.cid, CTAPHID_MSG, &code.to_be_bytes())
-            },
-            3 => {
-                let consent = prompt::yes_or_no_p("Allow U2F authentication?");
-                match consent.recv_timeout(Duration::from_millis(10000)) {
-                    Ok(Ok(true)) => (),
-                    Ok(Ok(false)) |
-                    Err(RecvTimeoutError::Disconnected) |
-                    Err(RecvTimeoutError::Timeout) => {
-                        return send_reply(q, self.cid, CTAPHID_MSG,
-                                          &SW_CONDITIONS_NOT_SATISFIED
-                                          .to_be_bytes())
-                    },
-                    Ok(Err(e)) => panic!("Receive consent: {:?}", e),
-                }
-                let presence = 1u8;
-                let counter :u32 = 0;
-                let sig = self.token.sign(wpriv,
-                                          &[application,
-                                            &[presence],
-                                            &counter.to_be_bytes(),
-                                            challange,].concat())?;
+    // fn u2f_authenticate(&mut self, control: u8, data: &[u8], q: &mut Q)
+    //                     -> R<()> {
+    //     log!("u2f_authenticate: 0x{:0x} {:?}", control, &data);
+    //     let challange = &data[..32];
+    //     let application = &data[32..64];
+    //     let l = data[64];
+    //     let key_handle = &data[65..];
+    //     assert!(key_handle.len() == l as usize);
+    //     let credential_id: CredentialId =
+    //         match serde_cbor::from_slice (key_handle) {
+    //             Ok(x) => x,
+    //             _ => return send_reply(q, self.cid, CTAPHID_MSG,
+    //                                    &SW_WRONG_DATA.to_be_bytes()),
+    //         };
+    //     let wpriv = &credential_id.public_parameter;
+    //     assert!(self.token.is_valid_id(wpriv));
+    //     match self.token.decrypt(&credential_id.public_parameter) {
+    //         Ok(rp_id) if rp_id == application => (),
+    //         _ => return send_reply(q, self.cid, CTAPHID_MSG,
+    //                                &SW_WRONG_DATA.to_be_bytes()),
+    //     };
+    //     match control {
+    //         7 => {
+    //             let code = SW_CONDITIONS_NOT_SATISFIED;
+    //             send_reply(q, self.cid, CTAPHID_MSG, &code.to_be_bytes())
+    //         },
+    //         3 => {
+    //             let consent = prompt::yes_or_no_p("Allow U2F authentication?");
+    //             match consent.recv_timeout(Duration::from_millis(10000)) {
+    //                 Ok(Ok(true)) => (),
+    //                 Ok(Ok(false)) |
+    //                 Err(RecvTimeoutError::Disconnected) |
+    //                 Err(RecvTimeoutError::Timeout) => {
+    //                     return send_reply(q, self.cid, CTAPHID_MSG,
+    //                                       &SW_CONDITIONS_NOT_SATISFIED
+    //                                       .to_be_bytes())
+    //                 },
+    //                 Ok(Err(e)) => panic!("Receive consent: {:?}", e),
+    //             }
+    //             let presence = 1u8;
+    //             let counter :u32 = 0;
+    //             let sig = self.token.sign(wpriv,
+    //                                       &[application,
+    //                                         &[presence],
+    //                                         &counter.to_be_bytes(),
+    //                                         challange,].concat())?;
 
-                let reply = [&[presence][..],
-                             &counter.to_be_bytes(),
-                             &sig,
-                             &SW_NO_ERROR.to_be_bytes()].concat();
-                send_reply(q, self.cid, CTAPHID_MSG, &reply)
-            }
-            _ => panic!("control byte 0x{:0x} nyi", control),
-        }
-    }
+    //             let reply = [&[presence][..],
+    //                          &counter.to_be_bytes(),
+    //                          &sig,
+    //                          &SW_NO_ERROR.to_be_bytes()].concat();
+    //             send_reply(q, self.cid, CTAPHID_MSG, &reply)
+    //         }
+    //         _ => panic!("control byte 0x{:0x} nyi", control),
+    //     }
+    // }
 
 }

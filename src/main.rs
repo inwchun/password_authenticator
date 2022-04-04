@@ -25,27 +25,33 @@ struct Args {
 }
 
 fn main() {
-    let args = parse_args();
-    crypto::globals::with_ctx(&args.pkcs11_module,&|ctx| {
-        let ctx = match ctx {
-            Ok(ctx) => ctx,
-            Err(e) => panic!("Failed to load pckcs11_module: {} {:?}",
-                             e, e)
-        };
-        let token = match crypto::open_token(
-            &ctx,
-            &args.token_label, &args.pin_file) {
-            Ok(x) => x,
-            Err(err) => panic!("Failed to open token: {}", err)
-        };
-        let listener = TcpListener::bind("127.0.0.1:3240").unwrap();
-        println!("Softfido server running.");
-        for s in listener.incoming() {
-            println!("New connection {:?}\n", s);
-            handle_stream(&mut s.unwrap(), &token).unwrap();
-        };
-        Ok(())
-    }).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:3240").unwrap();
+    println!("Softfido server running.");
+    for s in listener.incoming() {
+        println!("New connection {:?}\n", s);
+        handle_stream(&mut s.unwrap()).unwrap();
+    };
+    // let args = parse_args();
+    // crypto::globals::with_ctx(&args.pkcs11_module,&|ctx| {
+    //     let ctx = match ctx {
+    //         Ok(ctx) => ctx,
+    //         Err(e) => panic!("Failed to load pckcs11_module: {} {:?}",
+    //                          e, e)
+    //     };
+    //     let token = match crypto::open_token(
+    //         &ctx,
+    //         &args.token_label, &args.pin_file) {
+    //         Ok(x) => x,
+    //         Err(err) => panic!("Failed to open token: {}", err)
+    //     };
+    //     let listener = TcpListener::bind("127.0.0.1:3240").unwrap();
+    //     println!("Softfido server running.");
+    //     for s in listener.incoming() {
+    //         println!("New connection {:?}\n", s);
+    //         handle_stream(&mut s.unwrap(), &token).unwrap();
+    //     };
+    //     Ok(())
+    // }).unwrap();
 }
 
 fn default_args() -> Args {
@@ -102,7 +108,7 @@ fn parse_args() -> Args {
     }
 }
 
-fn handle_stream (stream: &mut TcpStream, token: &crypto::KeyStore)
+fn handle_stream (stream: &mut TcpStream)
                   -> Result<(), Box<dyn Error>> {
     stream.set_nodelay(true)?;
     let (version, code, status) = usbip::read_op_common(stream)?;
@@ -121,7 +127,7 @@ fn handle_stream (stream: &mut TcpStream, token: &crypto::KeyStore)
             }
             usbip::write_op_rep_import (stream)?;
             println!("import request busid {} complete", busid);
-            handle_commands(stream, token)?
+            handle_commands(stream)?
         },
         _ =>
             panic!("Unsupported packet: \
@@ -131,9 +137,9 @@ fn handle_stream (stream: &mut TcpStream, token: &crypto::KeyStore)
     Ok(())
 }
 
-fn handle_commands (stream: &mut TcpStream, token: &crypto::KeyStore)
+fn handle_commands (stream: &mut TcpStream)
                     -> Result<(), Box<dyn Error>> {
-    let mut dev = usbip::Device::new(token);
+    let mut dev = usbip::Device::new();
     let mut el = eventloop::EventLoop::new(&mut dev);
     usbip::Device::init_callbacks(&mut el);
     el.handle_commands(stream)
