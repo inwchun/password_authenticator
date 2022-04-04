@@ -14,9 +14,8 @@ use openssl::bn::{BigNum, BigNumContext};
 use openssl::nid::Nid;
 use sha2::{Sha256, Digest};
 
-pub fn hash_sha256(data: &[u8]) -> [u8; 32] {
-    let result: [u8;32] = Sha256::digest(data).as_slice()
-                            .try_into().expect("wrong length");
+pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
+    let result = Sha256::digest(data).to_vec();
     result
 }
 
@@ -42,7 +41,8 @@ pub fn get_pubkey(privkey:  EcKey<Private>) -> (Vec<u8>, Vec<u8>) {
 }
 
 pub fn prove(privkey: EcKey<Private>, message: &[u8]) -> Vec<u8> {
-    let signature = EcdsaSig::sign(message, &privkey).unwrap();
+    let hash = hash_sha256(message);
+    let signature = EcdsaSig::sign(&hash, &privkey).unwrap();
     let r = signature.r().to_vec();
     let s = signature.s().to_vec();
     encode_signature(&r, &s)
