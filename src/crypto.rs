@@ -258,8 +258,8 @@ fn der_encode_signature (points: &[u8]) -> Vec<u8> {
 }
 
 fn encode_signature (r: &[u8], s: &[u8]) -> Vec<u8> {
-    assert!(r.len() == 64);
-    assert!(s.len() == 64);
+    assert!(r.len() == 32);
+    assert!(s.len() == 32);
     fn encode_integer (mut int: &[u8], out: &mut Vec<u8>) {
         out.push(0x02);
         int = &int[int.iter().position(|&i| i != 0).unwrap() ..];
