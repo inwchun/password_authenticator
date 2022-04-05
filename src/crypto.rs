@@ -246,7 +246,7 @@ fn ec_point_x_y (point: &[u8]) -> (Vec<u8>, Vec<u8>) {
 fn xy_point (point: &[u8]) -> (Vec<u8>, Vec<u8>) {
     assert!(point.len() == 65, "invalid length");
     assert!(point[0] == 0x04, "point not in uncompressed format");
-    let (x, y) = (point[1..32].to_vec(), point[32..].to_vec());
+    let (x, y) = (point[1..33].to_vec(), point[33..].to_vec());
     (x, y)
 }
 
