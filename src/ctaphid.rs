@@ -11,6 +11,7 @@ use std::time::Duration;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use openssl::ec::EcKey;
 use openssl::pkey::Private;
+use secstr::SecStr;
 
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 type Q = VecDeque<Vec<u8>>;
@@ -31,9 +32,9 @@ enum State {
     Init,
     Cont {cmd: u8, bcnt: u16, buffer: Vec<u8>, seqnum: u8},
     MakeCredential {args: MakeCredentialArgs,
-                    consent: Receiver<Result<bool, pinentry_rs::Error>>},
+                    password: Receiver<Result<SecStr, pinentry_rs::Error>>},
     GetAssertion {args: GetAssertionArgs,
-                  consent: Receiver<Result<bool, pinentry_rs::Error>>},
+                  password: Receiver<Result<SecStr, pinentry_rs::Error>>},
 }
 
 const MAX_PACKET_SIZE: u16 = 64;
@@ -545,7 +546,7 @@ impl Channel{
             x => panic!("crypto alg not supported: {:?}", x),
         };
         let prompt = format!(
-            "Consent needed for creating registration credentials
+            "Password needed for creating registration credentials
 
   Relying Party: {} ({:?})
   User: {:?} ({:?})
@@ -553,21 +554,21 @@ impl Channel{
 Allow? ",
             &args.rp.id, &args.rp.name,
             &args.user.name, &args.user.display_name);
-        let x = prompt::yes_or_no_p(&prompt);
-        self.state = State::MakeCredential{ args: args, consent: x };
+        let x = prompt::get_password(&prompt);
+        self.state = State::MakeCredential{ args: args, password: x };
         self.make_credential_2(q)
     }
 
     fn make_credential_2 (&mut self, q: &mut Q) -> R<()> {
-        let consent = match &self.state {
-            State::MakeCredential{ consent, .. } => consent,
+        let pw = match &self.state {
+            State::MakeCredential{ password, .. } => password,
             _ => panic!()
         };
-        let r = match consent.recv_timeout(Duration::from_millis(200)) {
-            Ok(Ok(true)) => self.make_credential_3(q),
-            Ok(Ok(false)) | Err(RecvTimeoutError::Disconnected) =>
+        let r = match pw.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(password)) => self.make_credential_3(q, password),
+            Ok(Err(e)) => panic!("Receive password: {:?}", e),
+            Err(RecvTimeoutError::Disconnected) =>
                 self.send_cbor_error (ERR_OPERATION_DENIED, q),
-            Ok(Err(e)) => panic!("Receive consent: {:?}", e),
             Err(RecvTimeoutError::Timeout) => 
                 return send_reply(q, self.cid, CTAPHID_KEEPALIVE,
                                   &[STATUS_UPNEEDED][..]),
@@ -578,11 +579,12 @@ Allow? ",
 
     fn build_auth_data(&self, rp_id: &[u8],
                        privkey: &EcKey<Private>,
-                       pub_key_cose: &[u8]) -> R<Vec<u8>> {
+                       pub_key_cose: &[u8],
+                       pp: &[u8]) -> R<Vec<u8>> {
         let counter: u32 = 0;
         let flags: u8 = 1<<0|1<<6;
         let credential_id = serde_cbor::ser::to_vec_packed(&CredentialId{
-            public_parameter: Bytes([0;32].to_vec()),
+            public_parameter: Bytes(pp.to_vec()),
         })?;
         Ok([&hash_sha256(rp_id)[..],
             &[flags],
@@ -594,15 +596,22 @@ Allow? ",
         ].concat())
     }
 
-    fn make_credential_3 (&mut self, q: &mut Q) -> R<()>
+    fn make_credential_3 (&mut self, q: &mut Q, password: SecStr) -> R<()>
     {
-        let r_k = get_random();
-        let privkey = generate_privkey(&r_k);
-        let pubkey = get_pubkey(&privkey);
         let args = match &self.state {
             State::MakeCredential { args, .. } => args,
             _ => panic!()
         };
+        let r_k = get_random();
+        let hpw = hash_sha256(password.unsecure());
+        let x = crypto::pbkdf2(&r_k);
+        log!("x: {:?}", x);
+        log!("r_k: {:?}", r_k);
+        log!("hpw: {:?}", hpw);
+        let privkey = generate_privkey(&x);
+        let pubkey = get_pubkey(&privkey);
+        assert!(r_k.len() == 32 && hpw.len() == 32);
+        let pp: Vec<u8> = crypto::bitwise_xor(&r_k, &hpw);
         assert!(!args.options.rk);
         let pub_key_cose = serde_cbor::ser::to_vec_packed(&CoseKey {
                 kty: 2, alg: -7, crv: 1,
@@ -610,7 +619,7 @@ Allow? ",
                 y: Bytes(pubkey.1)
         })?;
         let auth_data = self.build_auth_data(args.rp.id.as_bytes(),
-                                             &privkey, &pub_key_cose)?;
+                                             &privkey, &pub_key_cose, &pp)?;
         let att_obj = MakeCredentialResponse {
             _marker: None,
             fmt: "none".to_string(),
@@ -659,29 +668,29 @@ Allow? ",
         //     _ => return self.send_cbor_error(ERR_INVALID_CREDENTIAL, q),
         // };
         let prompt = format!(
-            "Consent needed for signing challange
+            "Password needed for signing challange
 
   Relying Party: {}
 
 Allow?",
             &args.rp_id);
-        let x = prompt::yes_or_no_p(&prompt);
-        self.state = State::GetAssertion{ args: args, consent: x };
+        let x = prompt::get_password(&prompt);
+        self.state = State::GetAssertion{ args: args, password: x };
         self.get_assertion_2 (q)
     }
 
     // FIXME: almost the same as make_credential_2
     fn get_assertion_2 (&mut self, q: &mut Q) -> R<()>
     {
-        let consent = match &self.state {
-            State::GetAssertion{ consent, .. } => consent,
+        let pw = match &self.state {
+            State::GetAssertion{ password, .. } => password,
             _ => panic!()
         };
-        let r = match consent.recv_timeout(Duration::from_millis(200)) {
-            Ok(Ok(true)) => self.get_assertion_3(q),
-            Ok(Ok(false)) | Err(RecvTimeoutError::Disconnected) =>
+        let r = match pw.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(password)) => self.get_assertion_3(q, password),
+            Ok(Err(e)) => panic!("Receive password: {:?}", e),
+            Err(RecvTimeoutError::Disconnected) =>
                 self.send_cbor_error (ERR_OPERATION_DENIED, q),
-            Ok(Err(e)) => panic!("Receive consent: {:?}", e),
             Err(RecvTimeoutError::Timeout) =>
                 return send_reply(q, self.cid, CTAPHID_KEEPALIVE,
                                   &[STATUS_UPNEEDED][..]),
@@ -690,15 +699,23 @@ Allow?",
         r
     }
 
-    fn get_assertion_3 (&mut self, q: &mut Q) -> R<()> {
+    fn get_assertion_3 (&mut self, q: &mut Q, password: SecStr) -> R<()> {
         let args = match &self.state {
             State::GetAssertion { args, .. } => args,
             _ => panic!()
         };
-        let credential_id = serde_cbor::from_slice::<CredentialId>
-            (&args.allow_list[0].id.0).unwrap();
-        log!("cid: {:?}", credential_id.public_parameter.0);
-        let privkey = generate_privkey(&credential_id.public_parameter.0);
+        let cid = serde_cbor::from_slice::<CredentialId>
+                                (&args.allow_list[0].id.0).unwrap();
+        let pp = cid.public_parameter.0;
+        let hpw = hash_sha256(password.unsecure());
+        let r_k: Vec<u8> = crypto::bitwise_xor(&pp, &hpw);
+        let x = crypto::pbkdf2(&r_k);
+        log!("x: {:?}", x);
+        log!("r_k: {:?}", r_k);
+        log!("hpw: {:?}", hpw);
+        let privkey = generate_privkey(&x);
+        // let pubkey = get_pubkey(&privkey);
+        assert!(r_k.len() == 32 && hpw.len() == 32);
         let counter :u32 = 0;
         let auth_data: Vec<u8> = [
             &hash_sha256(args.rp_id.as_bytes())[..],

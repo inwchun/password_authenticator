@@ -8,12 +8,14 @@ use std::convert::TryInto;
 use openssl::ec::{
     EcKey, EcGroup, EcPoint, PointConversionForm, EcPointRef
 };
+use openssl;
 use openssl::ecdsa::EcdsaSig;
 use openssl::pkey::Private;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::nid::Nid;
 use sha2::{Sha256, Digest};
 use openssl::rand::rand_bytes;
+use openssl::pkcs5::pbkdf2_hmac;
 
 pub fn get_random() -> Vec<u8> {
     let mut bytes : Vec<u8> = [0u8;32].to_vec();
@@ -53,6 +55,26 @@ pub fn prove(privkey: EcKey<Private>, message: &[u8]) -> Vec<u8> {
     let r = signature.r().to_vec();
     let s = signature.s().to_vec();
     encode_signature(&r, &s)
+}
+
+pub fn pbkdf2(randomkey: &[u8]) -> Vec<u8> {
+    let mut key = [0u8;32];
+    pbkdf2_hmac(
+        randomkey,
+        &[],
+        100_000,
+        openssl::hash::MessageDigest::sha256(),
+        &mut key,
+    ).unwrap();
+    key.to_vec()
+}
+
+pub fn bitwise_xor(v1:&[u8], v2: &[u8]) -> Vec<u8> {
+    v1
+    .iter()
+    .zip(v2.iter())
+    .map(|(&x1, &x2)| x1 ^ x2)
+    .collect()  
 }
 
 

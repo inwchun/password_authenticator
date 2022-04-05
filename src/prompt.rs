@@ -15,6 +15,18 @@ fn escape_string(s: &str) -> String {
     r
 }
 
+pub fn get_password(prompt: &str)
+                  -> Receiver<Result<secstr::SecStr, pinentry_rs::Error>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let escaped = escape_string(prompt);
+    std::thread::spawn(move || {
+        let peb = pinentry_rs::pinentry().description(escaped);
+        let r = peb.pin((&"HanPass").to_string());
+        sender.send(r)//.unwrap()
+    });
+    receiver
+}
+
 pub fn yes_or_no_p(prompt: &str)
                   -> Receiver<Result<bool, pinentry_rs::Error>> {
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
