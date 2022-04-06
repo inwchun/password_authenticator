@@ -49,7 +49,7 @@ pub fn get_pubkey(privkey:  &EcKey<Private>) -> (Vec<u8>, Vec<u8>) {
     xy_point(&point)
 }
 
-pub fn prove(privkey: EcKey<Private>, message: &[u8]) -> Vec<u8> {
+pub fn sign(privkey: &EcKey<Private>, message: &[u8]) -> Vec<u8> {
     let hash = hash_sha256(message);
     let signature = EcdsaSig::sign(&hash, &privkey).unwrap();
     let r = signature.r().to_vec();
@@ -75,6 +75,32 @@ pub fn bitwise_xor(v1:&[u8], v2: &[u8]) -> Vec<u8> {
     .zip(v2.iter())
     .map(|(&x1, &x2)| x1 ^ x2)
     .collect()  
+}
+
+pub fn create_certificate(privkey: &EcKey<Private>, pubkey: &[u8],
+                            issuer: &str, subject: &str,
+                            not_before: DateTime<Utc>, 
+                            not_after: Option<DateTime<Utc>>) 
+                            -> Result<Vec<u8>, Error> 
+{
+    let sig_algo = EcdsaWithSha256 {};
+    let (tbs_cert, _pos) = cookie_factory::gen(
+        x509::write::tbs_certificate(
+            &[0],
+            &sig_algo,
+            issuer,
+            not_before, not_after,
+            subject,
+            &EcSubjectPublicKeyInfo{ public_key: pubkey }
+        ),
+        Vec::<u8>::new()
+    ).unwrap();
+    let signature = sign(privkey, &tbs_cert);
+    let (cert, _pos) = cookie_factory::gen(
+        x509::write::certificate(&tbs_cert, &sig_algo, &signature),
+        Vec::new()
+    ).unwrap();
+    Ok(cert)
 }
 
 
