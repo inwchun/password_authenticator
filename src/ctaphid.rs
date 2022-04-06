@@ -1,7 +1,7 @@
 
 use crate::prompt;
 use crate::crypto;
-use crate::crypto::{get_random, hash_sha256, get_pubkey, generate_privkey, sign};
+use crate::crypto::{get_random, hash_sha256, get_pubkey, generate_privkey, sign, prove, setup};
 use serde::{Serialize, Serializer, Deserialize, Deserializer,
             ser::SerializeMap};
 use std::cmp::min;
@@ -581,7 +581,6 @@ Allow? ",
     }
 
     fn build_auth_data(&self, rp_id: &[u8],
-                       privkey: &EcKey<Private>,
                        pub_key_cose: &[u8],
                        pp: &[u8]) -> R<Vec<u8>> {
         let counter: u32 = 0;
@@ -605,16 +604,7 @@ Allow? ",
             State::MakeCredential { args, .. } => args,
             _ => panic!()
         };
-        let r_k = get_random();
-        let hpw = hash_sha256(password.unsecure());
-        let x = crypto::pbkdf2(&r_k);
-        log!("x: {:?}", x);
-        log!("r_k: {:?}", r_k);
-        log!("hpw: {:?}", hpw);
-        let privkey = generate_privkey(&x);
-        let pubkey = get_pubkey(&privkey);
-        assert!(r_k.len() == 32 && hpw.len() == 32);
-        let pp: Vec<u8> = crypto::bitwise_xor(&r_k, &hpw);
+        let (pp, pubkey) = setup(password.unsecure());
         assert!(!args.options.rk);
         let pub_key_cose = serde_cbor::ser::to_vec_packed(&CoseKey {
                 kty: 2, alg: -7, crv: 1,
@@ -622,7 +612,7 @@ Allow? ",
                 y: Bytes(pubkey.1)
         })?;
         let auth_data = self.build_auth_data(args.rp.id.as_bytes(),
-                                             &privkey, &pub_key_cose, &pp)?;
+                                            &pub_key_cose, &pp)?;
         let att_obj = MakeCredentialResponse {
             _marker: None,
             fmt: "none".to_string(),
@@ -713,15 +703,6 @@ Allow?",
         let cid = serde_cbor::from_slice::<CredentialId>
                                 (&args.allow_list[0].id.0).unwrap();
         let pp = cid.public_parameter.0;
-        let hpw = hash_sha256(password.unsecure());
-        let r_k: Vec<u8> = crypto::bitwise_xor(&pp, &hpw);
-        let x = crypto::pbkdf2(&r_k);
-        log!("x: {:?}", x);
-        log!("r_k: {:?}", r_k);
-        log!("hpw: {:?}", hpw);
-        let privkey = generate_privkey(&x);
-        // let pubkey = get_pubkey(&privkey);
-        assert!(r_k.len() == 32 && hpw.len() == 32);
         let counter :u32 = 0;
         let auth_data: Vec<u8> = [
             &hash_sha256(args.rp_id.as_bytes())[..],
@@ -730,31 +711,19 @@ Allow?",
             &counter.to_be_bytes(),
         ].concat();
         let data = [&auth_data[..], &args.client_data_hash.0].concat();
-        let signature =  sign(&privkey, &data);
+        let proof = prove(&password.unsecure(), &pp, &data);
         let credential_cbor_packed = serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?;
         let credential_cbor = serde_cbor::ser::to_vec(&args.allow_list[0].clone())?;
         let response = GetAssertionResponse {
             _marker: None,
             credential: Some(args.allow_list[0].clone()),
             auth_data: Bytes(auth_data),
-            signature: Bytes(signature),
+            signature: Bytes(proof),
             user: None,
             number_of_credentials: Some(1),
         };
         let mut cbor = serde_cbor::ser::to_vec_packed(&response)?;
         cbor.splice(2..(credential_cbor_packed.len()+2), credential_cbor);
-        log!("{:?}", serde_cbor::ser::to_vec_packed(&response)?);
-        log!("{:?}", cbor);
-        // log!("{:?}", serde_cbor::ser::to_writer(&response,&response)?);
-        // log!("{:?}", cbor);
-        // let args: GetAssertionResponse = match serde_cbor::from_slice(&cbor) {
-        //     Ok(x) => x,
-        //     Err(e) => {
-        //         log!("failed to parse cbor: {}", e);
-        //         return self.send_error(ERR_INVALID_PAR, q)
-        //     }
-        // };
-        // log!("{:?}", args);
         self.send_cbor_reply(&cbor, q)
     }
 
@@ -827,9 +796,7 @@ Allow?",
         let r_k = get_random();
         let hpw = hash_sha256(pw.unsecure());
         let x = crypto::pbkdf2(&r_k);
-        log!("x: {:?}", x);
-        log!("r_k: {:?}", r_k);
-        log!("hpw: {:?}", hpw);
+        // requires privkey for self signing in u2f
         let privkey = generate_privkey(&x);
         let pubkey = get_pubkey(&privkey);
         let der_pubkey = [&[4u8], &pubkey.0[..], &pubkey.1[..]].concat();
@@ -875,13 +842,6 @@ Allow?",
                                        &SW_WRONG_DATA.to_be_bytes()),
             };    
         let pp = credential_id.public_parameter.0;
-        // let wpriv = &credential_id.public_parameter;
-        // assert!(self.token.is_valid_id(wpriv));
-        // match self.token.decrypt(&credential_id.public_parameter) {
-        //     Ok(rp_id) if rp_id == application => (),
-        //     _ => return send_reply(q, self.cid, CTAPHID_MSG,
-        //                            &SW_WRONG_DATA.to_be_bytes()),
-        // };
         match control {
             7 => {
                 let code = SW_CONDITIONS_NOT_SATISFIED;
@@ -903,27 +863,17 @@ Allow?",
                             &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes())
                     }
                 };
-                let hpw = hash_sha256(pw.unsecure());
-                let r_k :Vec<u8> = crypto::bitwise_xor(&hpw, &pp);
-                let x = crypto::pbkdf2(&r_k);
-                log!("x: {:?}", x);
-                log!("r_k: {:?}", r_k);
-                log!("hpw: {:?}", hpw);
-                let privkey = generate_privkey(&x);
-                let pubkey = get_pubkey(&privkey);
-                let der_pubkey = [&[4u8], &pubkey.0[..], &pubkey.1[..]].concat();
-                assert!(r_k.len() == 32 && hpw.len() == 32);
                 let presence = 1u8;
                 let counter :u32 = 0;
-                let signature = sign(&privkey,
-                                &[application,
-                                &[presence],
-                                &counter.to_be_bytes(),
-                                challange,].concat());
+                let data = [application,
+                            &[presence],
+                            &counter.to_be_bytes(),
+                            challange,].concat();
+                let proof = prove(&pw.unsecure(), &pp, &data);
 
                 let reply = [&[presence][..],
                              &counter.to_be_bytes(),
-                             &signature,
+                             &proof,
                              &SW_NO_ERROR.to_be_bytes()].concat();
                 send_reply(q, self.cid, CTAPHID_MSG, &reply)
             }

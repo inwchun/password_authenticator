@@ -17,6 +17,25 @@ use sha2::{Sha256, Digest};
 use openssl::rand::rand_bytes;
 use openssl::pkcs5::pbkdf2_hmac;
 
+pub fn setup(password: &[u8]) -> (Vec<u8>,(Vec<u8>, Vec<u8>)) {
+    let r_k = get_random();
+    let x = pbkdf2(&r_k);
+    let hpw = hash_sha256(password);
+    let privkey = generate_privkey(&x);
+    let pubkey = get_pubkey(&privkey);
+    let pp = bitwise_xor(&hpw, &r_k);
+    (pp, pubkey)
+}
+
+pub fn prove(password: &[u8], pp: &[u8], message: &[u8]) -> Vec<u8> {
+    let hpw = hash_sha256(password);
+    let r_k: Vec<u8> = bitwise_xor(pp, &hpw);
+    let x = pbkdf2(&r_k);
+    let privkey = generate_privkey(&x);
+    let signature = sign(&privkey, message);
+    signature
+}
+
 pub fn get_random() -> Vec<u8> {
     let mut bytes : Vec<u8> = [0u8;32].to_vec();
     rand_bytes(&mut bytes);
