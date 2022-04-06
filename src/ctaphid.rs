@@ -566,7 +566,10 @@ Allow? ",
         };
         let r = match pw.recv_timeout(Duration::from_millis(200)) {
             Ok(Ok(password)) => self.make_credential_3(q, password),
-            Ok(Err(e)) => panic!("Receive password: {:?}", e),
+            Ok(Err(e)) => {
+                log!("pinentry error: {}", e);
+                self.send_cbor_error (ERR_OPERATION_DENIED, q)
+            },
             Err(RecvTimeoutError::Disconnected) =>
                 self.send_cbor_error (ERR_OPERATION_DENIED, q),
             Err(RecvTimeoutError::Timeout) => 
@@ -688,7 +691,10 @@ Allow?",
         };
         let r = match pw.recv_timeout(Duration::from_millis(200)) {
             Ok(Ok(password)) => self.get_assertion_3(q, password),
-            Ok(Err(e)) => panic!("Receive password: {:?}", e),
+            Ok(Err(e)) => {
+                log!("pinentry error: {}", e);
+                self.send_cbor_error (ERR_OPERATION_DENIED, q)
+            },
             Err(RecvTimeoutError::Disconnected) =>
                 self.send_cbor_error (ERR_OPERATION_DENIED, q),
             Err(RecvTimeoutError::Timeout) =>
@@ -809,10 +815,14 @@ Allow?",
         let pw = match password.recv_timeout(Duration::from_millis(10000)) {
             Ok(Ok(password)) => (password),
             Err(RecvTimeoutError::Disconnected) |
-            Err(RecvTimeoutError::Timeout) => 
+            Err(RecvTimeoutError::Timeout) =>
+            return send_reply(q, self.cid, CTAPHID_MSG,
+                &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes()),
+            Ok(Err(e)) => {
+                log!("pinentry error: {}", e);
                 return send_reply(q, self.cid, CTAPHID_MSG,
-                                  &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes()),
-            Ok(Err(e)) => panic!("Receive consent: {:?}", e),
+                    &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes())
+            }
         };
         let r_k = get_random();
         let hpw = hash_sha256(pw.unsecure());
@@ -885,10 +895,13 @@ Allow?",
                     Err(RecvTimeoutError::Disconnected) |
                     Err(RecvTimeoutError::Timeout) => {
                         return send_reply(q, self.cid, CTAPHID_MSG,
-                                          &SW_CONDITIONS_NOT_SATISFIED
-                                          .to_be_bytes())
+                        &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes())
                     },
-                    Ok(Err(e)) => panic!("Receive password: {:?}", e),
+                    Ok(Err(e)) => {
+                        log!("pinentry error: {}", e);
+                        return send_reply(q, self.cid, CTAPHID_MSG,
+                            &SW_CONDITIONS_NOT_SATISFIED.to_be_bytes())
+                    }
                 };
                 let hpw = hash_sha256(pw.unsecure());
                 let r_k :Vec<u8> = crypto::bitwise_xor(&hpw, &pp);
