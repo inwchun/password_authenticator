@@ -18,11 +18,11 @@ from fido2.webauthn import (
     PublicKeyCredentialRequestOptions,
     UserVerificationRequirement,
 )
-
+import hashlib
 from cryptography.hazmat.primitives import constant_time
 import sys
 import ctypes
-
+ITERATIONS = 100_000
 class HanPassServer(Fido2Server):
     def __init__(
         self, rp, attestation=None, verify_origin=None, verify_attestation=None
@@ -30,7 +30,7 @@ class HanPassServer(Fido2Server):
         super().__init__(rp, attestation, verify_origin, verify_attestation)
 
     def authenticate_complete(
-        self, state, credentials, credential_id, client_data, auth_data, signature
+        self, state, credentials, credential_id, client_data, auth_data, proof
     ):
         """Verify the correctness of the assertion data received from
         the client.
@@ -40,7 +40,7 @@ class HanPassServer(Fido2Server):
         :param credential_id: The credential id from the client response.
         :param client_data: The client data.
         :param auth_data: The authenticator data.
-        :param signature: The signature provided by the client."""
+        :param proof: The proof provided by the client."""
         if client_data.get("type") != WEBAUTHN_TYPE.GET_ASSERTION:
             raise ValueError("Incorrect type in ClientData.")
         if not self._verify(client_data.get("origin")):
@@ -62,12 +62,34 @@ class HanPassServer(Fido2Server):
 
         for cred in credentials:
             if cred.credential_id == credential_id:
-                # change signature verification
-                sig_len = signature[1] + 2
+                sig_len = proof[1] + 2
+                print(sig_len)
+                print(len(proof))
+                signature = proof[0: sig_len]
+                random = proof[sig_len: sig_len + 32]
+                hashval = proof[sig_len + 32:]
+                k = None
+                m = auth_data + client_data.hash
+                print("r_p: ")
+                print(bytearray(random).hex())
+                print("hashval ")
+                print(bytearray(hashval).hex())
+                x = cred.public_key[-2]
+                y = cred.public_key[-3]
+                print(x)
+                print(y)
+                for i in range(0, ITERATIONS):
+                    # convert i to 4 byte u8
+                    k_ = i.to_bytes(4, byteorder="big")
+                    if hashval == hashlib.sha256(m+random+k_).digest():
+                        k = k_
+                        break
+                print(k)
                 try:
-                    cred.public_key.verify(auth_data + client_data.hash, signature)
+                    cred.public_key.verify(m + random + k_ + x + y, signature)
                 except _InvalidSignature:
                     raise ValueError("Invalid signature.")
+
                 return cred
         raise ValueError("Unknown credential ID.")
 

@@ -16,6 +16,8 @@ use openssl::nid::Nid;
 use sha2::{Sha256, Digest};
 use openssl::rand::rand_bytes;
 use openssl::pkcs5::pbkdf2_hmac;
+use rand::Rng;
+
 
 pub fn setup(password: &[u8]) -> (Vec<u8>,(Vec<u8>, Vec<u8>)) {
     let r_k = get_random();
@@ -32,14 +34,33 @@ pub fn prove(password: &[u8], pp: &[u8], message: &[u8]) -> Vec<u8> {
     let r_k: Vec<u8> = bitwise_xor(pp, &hpw);
     let x = pbkdf2(&r_k);
     let privkey = generate_privkey(&x);
-    let signature = sign(&privkey, message);
-    signature
+    let pubkey = get_pubkey(&privkey);
+    let r_p = get_random();
+    let k = get_randomk();
+    let data = [message, &r_p, &k].concat();
+    let hashval = hash_sha256(&data);
+    // TODO: concat pubkey
+    let signature = sign(&privkey, 
+                        &[&data[..], &pubkey.0[..], &pubkey.1[..]].concat()
+                    );
+    let proof = [&signature[..], &r_p[..], &hashval[..]].concat();
+    proof
 }
 
 pub fn get_random() -> Vec<u8> {
     let mut bytes : Vec<u8> = [0u8;32].to_vec();
     rand_bytes(&mut bytes);
     bytes.to_vec()
+}
+
+pub fn get_randomk() -> Vec<u8> {
+    let mut rng = rand::thread_rng();
+    let k_u32 :u32 = rng.gen_range(0..100_000);
+    let u1 : u8 = ((k_u32 >> 24) & 0xff) as u8;
+    let u2 : u8 = ((k_u32 >> 16) & 0xff) as u8;
+    let u3 : u8 = ((k_u32 >> 8) & 0xff) as u8;
+    let u4 : u8 = (k_u32 & 0xff) as u8;
+    [u1, u2, u3, u4].to_vec()
 }
 
 pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
