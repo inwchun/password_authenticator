@@ -39,7 +39,6 @@ pub fn prove(password: &[u8], pp: &[u8], message: &[u8]) -> Vec<u8> {
     let k = get_randomk();
     let data = [message, &r_p, &k].concat();
     let hashval = hash_sha256(&data);
-    // TODO: concat pubkey
     let signature = sign(&privkey, 
                         &[&data[..], &pubkey.0[..], &pubkey.1[..]].concat()
                     );

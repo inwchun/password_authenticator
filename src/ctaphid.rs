@@ -585,15 +585,21 @@ Allow? ",
                        pp: &[u8]) -> R<Vec<u8>> {
         let counter: u32 = 0;
         let flags: u8 = 1<<0|1<<6;
-        let credential_id = serde_cbor::ser::to_vec_packed(&CredentialId{
+        log!("pp length: {:?}", pp.len() );
+        let credential_id = &CredentialId{
             public_parameter: Bytes(pp.to_vec()),
-        })?;
+        };
+        // serde_cbor::ser::to_vec_packed(&CredentialId{
+        //     public_parameter: Bytes(pp.to_vec()),
+        // })?;
+        log!("length: {:?}",(credential_id.public_parameter.0.len() as u16).to_be_bytes());
+        log!("length: {:?}", credential_id.public_parameter.0.len() );
         Ok([&hash_sha256(rp_id)[..],
             &[flags],
             &counter.to_be_bytes(),
             &AAGUID.to_le_bytes(),
-            &(credential_id.len() as u16).to_be_bytes(),
-            &credential_id,
+            &(credential_id.public_parameter.0.len() as u16).to_be_bytes(),
+            &credential_id.public_parameter.0,
             pub_key_cose
         ].concat())
     }
@@ -649,12 +655,12 @@ Allow? ",
         };
         // log!("get_assertion {:?}", args);
         assert!(args.allow_list.len() == 1);
-        let credential_id: CredentialId = match serde_cbor::from_slice
-            (&args.allow_list[0].id.0) {
-                Ok(x) => x,
-                Err(_) => return self.send_cbor_error(ERR_INVALID_CREDENTIAL,
-                                                      q)
-            };
+        // match serde_cbor::from_slice
+        //     (&args.allow_list[0].id.0) {
+        //         Ok(x) => x,
+        //         Err(_) => return self.send_cbor_error(ERR_INVALID_CREDENTIAL,
+        //                                               q)
+        //     };
         // match (self.token.decrypt(&credential_id.public_parameter),
         //        args.rp_id.as_bytes()) {
         //     (Ok(id1), id2) if id1 == id2 => (),
@@ -700,9 +706,9 @@ Allow?",
             State::GetAssertion { args, .. } => args,
             _ => panic!()
         };
-        let cid = serde_cbor::from_slice::<CredentialId>
-                                (&args.allow_list[0].id.0).unwrap();
-        let pp = cid.public_parameter.0;
+        // serde_cbor::from_slice::<CredentialId>
+        //                         (&args.allow_list[0].id.0).unwrap();
+        let pp = &args.allow_list[0].id.0;
         let counter :u32 = 0;
         let auth_data: Vec<u8> = [
             &hash_sha256(args.rp_id.as_bytes())[..],
@@ -711,7 +717,7 @@ Allow?",
             &counter.to_be_bytes(),
         ].concat();
         let data = [&auth_data[..], &args.client_data_hash.0].concat();
-        let proof = prove(&password.unsecure(), &pp, &data);
+        let proof = prove(&password.unsecure(), pp, &data);
         let credential_cbor_packed = serde_cbor::ser::to_vec_packed(&args.allow_list[0].clone())?;
         let credential_cbor = serde_cbor::ser::to_vec(&args.allow_list[0].clone())?;
         let response = GetAssertionResponse {
