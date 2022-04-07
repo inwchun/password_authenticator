@@ -12,6 +12,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use openssl::ec::EcKey;
 use openssl::pkey::Private;
 use secstr::SecStr;
+use std::str;
 
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 type Q = VecDeque<Vec<u8>>;
@@ -546,14 +547,18 @@ impl Channel{
             x => panic!("crypto alg not supported: {:?}", x),
         };
         let prompt = format!(
-            "Password needed for creating registration credentials
-
-  Relying Party: {} ({:?})
-  User: {:?} ({:?})
-
-Allow? ",
-            &args.rp.id, &args.rp.name,
-            &args.user.name, &args.user.display_name);
+"
+    Enter your Password for registration
+    RP ID: {} 
+    RP Name: {}
+    User Name: {} 
+    User Display Name: {}
+",
+            &args.rp.id,
+            &args.rp.name.clone().unwrap_or("No RP Name".to_string()),
+            &args.user.name.clone().unwrap_or("No User Name".to_string()),
+            &args.user.display_name.clone().unwrap_or("No User Display Name".to_string())
+        );
         let x = prompt::get_password(&prompt);
         self.state = State::MakeCredential{ args: args, password: x };
         self.make_credential_2(q)
@@ -667,12 +672,12 @@ Allow? ",
         //     _ => return self.send_cbor_error(ERR_INVALID_CREDENTIAL, q),
         // };
         let prompt = format!(
-            "Password needed for signing challange
-
-  Relying Party: {}
-
-Allow?",
-            &args.rp_id);
+"
+    Enter your Password
+    RP ID: {}
+",
+            &args.rp_id,
+        );
         let x = prompt::get_password(&prompt);
         self.state = State::GetAssertion{ args: args, password: x };
         self.get_assertion_2 (q)
@@ -786,7 +791,12 @@ Allow?",
         assert!(data.len() == 64);
         let challenge = &data[0..32];
         let application = &data[32..];
-        let password = prompt::get_password("hi");
+        let prompt = format!(
+"
+    Enter your Password for registration
+",
+        );
+        let password = prompt::get_password(&prompt);
         let pw = match password.recv_timeout(Duration::from_millis(10000)) {
             Ok(Ok(password)) => (password),
             Err(RecvTimeoutError::Disconnected) |
@@ -854,7 +864,12 @@ Allow?",
                 send_reply(q, self.cid, CTAPHID_MSG, &code.to_be_bytes())
             },
             3 => {
-                let password = prompt::get_password("hi");        
+                let prompt = format!(
+"
+    Enter your Password
+"
+                );
+                let password = prompt::get_password(&prompt);        
                 // let consent = prompt::yes_or_no_p("Allow U2F authentication?");
                 let pw = match password.recv_timeout(Duration::from_millis(10000)) {
                     Ok(Ok(password)) => (password),
