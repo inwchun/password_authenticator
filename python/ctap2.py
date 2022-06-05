@@ -22,7 +22,7 @@ import hashlib
 from cryptography.hazmat.primitives import constant_time
 import sys
 import ctypes
-ITERATIONS = 100_000
+ITERATIONS = 1024
 
 class HanPassServer(Fido2Server):
     def __init__(
@@ -65,20 +65,21 @@ class HanPassServer(Fido2Server):
             if cred.credential_id == credential_id:
                 sig_len = proof[1] + 2
                 signature = proof[0: sig_len]
-                random = proof[sig_len: sig_len + 32]
-                hashval = proof[sig_len + 32:]
-                k = None
+                t_vk = proof[sig_len: sig_len + 32]
+                salt_t = proof[sig_len + 32:]
+                p = None
                 m = auth_data + client_data.hash
                 x = cred.public_key[-2]
                 y = cred.public_key[-3]
                 for i in range(0, ITERATIONS):
                     # convert i to 4 byte u8
-                    k_ = i.to_bytes(4, byteorder="big")
-                    if hashval == hashlib.sha256(m+random+k_).digest():
-                        k = k_
+                    p_ = i.to_bytes(2, byteorder="big")
+                    print(p_)
+                    if t_vk == hashlib.pbkdf2_hmac('sha256',x+y+p_,salt_t,100):
+                        p = p_
                         break
                 try:
-                    cred.public_key.verify(m + random + k + x + y, signature)
+                    cred.public_key.verify(m + p + salt_t + x + y, signature)
                 except _InvalidSignature:
                     raise ValueError("Invalid signature.")
 

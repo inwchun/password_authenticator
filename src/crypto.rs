@@ -20,46 +20,49 @@ use rand::Rng;
 
 
 pub fn setup(password: &[u8]) -> (Vec<u8>,(Vec<u8>, Vec<u8>)) {
-    let r_k = get_random();
-    let x = pbkdf2(&r_k);
-    let hpw = hash_sha256(password);
+    let salt_x = get_random();
+    let x = hash_slow(&password ,&salt_x);
+    // let hpw = hash_sha256(password);
     let privkey = generate_privkey(&x);
-    let pubkey = get_pubkey(&privkey);
-    let pp = bitwise_xor(&hpw, &r_k);
-    (pp, pubkey)
+    let vk = get_pubkey(&privkey);
+    // let pp = bitwise_xor(&hpw, &salt_x);
+    let pp = salt_x;
+    (pp, vk)
 }
 
 pub fn prove(password: &[u8], pp: &[u8], message: &[u8]) -> Vec<u8> {
-    let hpw = hash_sha256(password);
-    let r_k: Vec<u8> = bitwise_xor(pp, &hpw);
-    let x = pbkdf2(&r_k);
-    let privkey = generate_privkey(&x);
-    let pubkey = get_pubkey(&privkey);
-    let r_p = get_random();
-    let k = get_randomk();
-    let data = [message, &r_p, &k].concat();
-    let hashval = hash_sha256(&data);
-    let signature = sign(&privkey, 
-                        &[&data[..], &pubkey.0[..], &pubkey.1[..]].concat()
+    let salt_x = pp;
+    let x = hash_slow(&password, &salt_x);
+    let salt_t = get_random();
+    let p = get_randomk();
+    let sk = generate_privkey(&x);
+    let pk = get_pubkey(&sk);
+    let g_x = [&pk.0[..], &pk.1[..]].concat();
+    let m_sigma = [message, &p, &salt_t, &g_x].concat();
+    let t_vk = hash_pepper(&g_x, &salt_t, &p);
+    let signature = sign(&sk, 
+                        &m_sigma
                     );
-    let proof = [&signature[..], &r_p[..], &hashval[..]].concat();
+    let proof = [&signature[..], &t_vk[..], &salt_t[..]].concat();
     proof
 }
 
 pub fn get_random() -> Vec<u8> {
-    let mut bytes : Vec<u8> = [0u8;32].to_vec();
+    let mut bytes : Vec<u8> = [0u8;16].to_vec();
     rand_bytes(&mut bytes);
     bytes.to_vec()
 }
 
 pub fn get_randomk() -> Vec<u8> {
     let mut rng = rand::thread_rng();
-    let k_u32 :u32 = rng.gen_range(0..100_000);
-    let u1 : u8 = ((k_u32 >> 24) & 0xff) as u8;
-    let u2 : u8 = ((k_u32 >> 16) & 0xff) as u8;
-    let u3 : u8 = ((k_u32 >> 8) & 0xff) as u8;
-    let u4 : u8 = (k_u32 & 0xff) as u8;
-    [u1, u2, u3, u4].to_vec()
+    let k_u16 :u16 = rng.gen_range(0..1023);
+    // let u1 : u8 = ((k_u32 >> 24) & 0xff) as u8;
+    // let u2 : u8 = ((k_u32 >> 16) & 0xff) as u8;
+    let u3 : u8 = ((k_u16 >> 8) & 0xff) as u8;
+    let u4 : u8 = (k_u16 & 0xff) as u8;
+    println!("{:?}\n", [u3, u4].to_vec());
+    // [u1, u2, u3, u4].to_vec()
+    [u3, u4].to_vec()
 }
 
 pub fn hash_sha256(data: &[u8]) -> Vec<u8> {
@@ -94,6 +97,33 @@ pub fn sign(privkey: &EcKey<Private>, message: &[u8]) -> Vec<u8> {
     let r = signature.r().to_vec();
     let s = signature.s().to_vec();
     encode_signature(&r, &s)
+}
+
+pub fn hash_pepper(g_x: &[u8], salt_t: &[u8], p: &[u8]) -> Vec<u8> {
+    let mut key = [0u8;32];
+    let data = &[&g_x[..], &p[..]].concat();
+    println!("{:?}", openssl::base64::encode_block(&g_x));
+    println!("{:?}", openssl::base64::encode_block(&data));
+    pbkdf2_hmac(
+        data,
+        salt_t,
+        100,
+        openssl::hash::MessageDigest::sha256(),
+        &mut key,
+    ).unwrap();
+    key.to_vec()
+}
+
+pub fn hash_slow(password: &[u8], salt_x: &[u8]) -> Vec<u8> {
+    let mut key = [0u8;32];
+    pbkdf2_hmac(
+        password,
+        salt_x,
+        100_000,
+        openssl::hash::MessageDigest::sha256(),
+        &mut key,
+    ).unwrap();
+    key.to_vec()
 }
 
 pub fn pbkdf2(randomkey: &[u8]) -> Vec<u8> {

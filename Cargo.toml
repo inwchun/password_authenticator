@@ -1,10 +1,10 @@
 [package]
-name = "softfido"
+name = "hanpass_authenticator"
 version = "0.1.0"
-authors = ["Helmut Eller <eller.helmut@gmail.com>"]
-edition = "2018"
-
+authors = ["Inwhan Chun <inwhan.chun@sf.snu.ac.kr>"]
+edition = "2022"
 exclude = ["python"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
