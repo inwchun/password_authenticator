@@ -11,8 +11,8 @@ fn short_item(typ: u8, tag: u8, data: u32) -> Vec<u8> {
     #[allow(ellipsis_inclusive_range_patterns)]
     match data {
         0 => vec![b0(0b00)],
-        1...0xff => vec![b0(0b01), bytes[0]],
-        0x0100...0xffff => vec![b0(0b10), bytes[0], bytes[1]],
+        1..=0xff => vec![b0(0b01), bytes[0]],
+        0x0100..=0xffff => vec![b0(0b10), bytes[0], bytes[1]],
         _ => vec![b0(0b11), bytes[0], bytes[1], bytes[2], bytes[3]],
     }
 }

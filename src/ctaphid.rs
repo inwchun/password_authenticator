@@ -1,4 +1,3 @@
-
 use crate::prompt;
 use crate::crypto;
 use crate::crypto::{get_random, hash_sha256, get_pubkey, generate_privkey, sign, prove, setup};
