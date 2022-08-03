@@ -1,0 +1,26 @@
+[package]
+name = "softfido"
+version = "0.1.0"
+authors = ["Inwhan Chun <inwhan.chun@sf.snu.ac.kr>"]
+edition = "2021"
+exclude = ["python"]
+
+
+
+[dependencies]
+packed_struct = "0.3"
+packed_struct_codegen = "0.3"
+# bitflags = "1.1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.10.2"
+pinentry-rs = "0.1.0"
+secstr = "0.4.0"
+chrono = "0.4"
+cookie-factory = "0.3.0"
+lazy_static = "1.4.0"
+sha2 = "0.10.2"
+openssl= { version = "0.10", features = ["vendored"] }
+rand = "0.8.5"
+
+[build-dependencies]
+bindgen = "0.52.0"
