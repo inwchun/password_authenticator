@@ -22,19 +22,14 @@ fn main() {
 
     // latencytest();
 
-    // usbip port
-    println!("RUNNING AUTHENTICATOR");
+    // USBIP: refer to https://docs.kernel.org/usb/usbip_protocol.html
+    println!("virtual USB running");
     let listener = TcpListener::bind("127.0.0.1:3240").unwrap();
     for s in listener.incoming() {
         let mut stream = s.unwrap();
         stream.set_nodelay(true).unwrap();
         let (version, code, status) = usbip::read_op_common(&mut stream).unwrap();
         match (version, code as u32, status) {
-            (usbip::USBIP_VERSION, c::OP_REQ_DEVLIST, 0) => {
-                println!("OP_REQ_DEVLIST");
-                usbip::write_op_rep_devlist (&mut stream).unwrap();
-                stream.shutdown(std::net::Shutdown::Both).unwrap()
-            },
             (usbip::USBIP_VERSION, c::OP_REQ_IMPORT, 0) => {
                 let busid = usbip::read_busid(&mut stream).unwrap();
                 if busid != "1-1" {
@@ -46,6 +41,11 @@ fn main() {
                 usbip::Device::init_callbacks(&mut el);
                 el.handle_commands(&mut stream).unwrap()
             },
+            // (usbip::USBIP_VERSION, c::OP_REQ_DEVLIST, 0) => {
+            //     println!("OP_REQ_DEVLIST");
+            //     usbip::write_op_rep_devlist (&mut stream).unwrap();
+            //     stream.shutdown(std::net::Shutdown::Both).unwrap()
+            // },
             _ => panic!("Unsupported operation")
         }
     };

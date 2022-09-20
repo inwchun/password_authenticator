@@ -29,6 +29,8 @@ create_options, state = server.register_begin(
     authenticator_attachment="cross-platform"
 )
 
+print(create_options)
+
 # Create user credential
 result = client.make_credential(create_options["publicKey"])
 
@@ -40,22 +42,37 @@ auth_data = server.register_complete(
 
 credentials = [auth_data.credential_data]
 
-
 print("Credential created!")
 
-f = open("result/test.txt", "a")
+request_options, state = server.authenticate_begin(credentials, user_verification="discouraged")
 
-for i in range(2):
-    request_options, state = server.authenticate_begin(credentials, user_verification="discouraged")
-    request_options['publicKey']['allowCredentials'][0]['id'] = os.urandom(32)
-    print(request_options['publicKey'])
-    # Authenticate the credential
-    start = time.time()
-    result = client.get_assertion(
-        request_options["publicKey"]
-    )
-    end = time.time()
-    f.write(str(end-start) + "\n")
-    print(i, result)
+print(request_options['publicKey'])
+# Authenticate the credential
 
-f.close()
+# result = client.get_assertion(
+#     request_options["publicKey"]
+# )
+
+# Authenticate the credential
+result = client.get_assertion(
+    request_options["publicKey"]
+)
+
+# Only one cred in allowCredentials, only one response.
+result = result.get_response(0)
+
+# Complete authenticator
+server.authenticate_complete(
+    state,
+    credentials,
+    result.credential_id,
+    result.client_data,
+    result.authenticator_data,
+    result.signature,
+)
+
+print("Credential authenticated!")
+
+print("CLIENT DATA:", result.client_data)
+print()
+print("AUTH DATA:", result.authenticator_data)

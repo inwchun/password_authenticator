@@ -11,16 +11,38 @@ from fido2.webauthn import (
     PublicKeyCredentialRpEntity,
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
-    PublicKeyCredentialType,
-    PublicKeyCredentialParameters,
+    # PublicKeyCredentialType,
+    # PublicKeyCredentialParameters,
     PublicKeyCredentialCreationOptions,
     PublicKeyCredentialRequestOptions,
     UserVerificationRequirement,
+    _DataObject,
 )
 import hashlib
 from cryptography.hazmat.primitives import constant_time
 import sys
 import ctypes
+from fido2.cose import ES256
+from enum import Enum, unique
+import six
+
+# class _StringEnum(six.text_type, Enum):
+#     @classmethod
+#     def _wrap(cls, value):
+#         if value is None:
+#             return None
+#         return cls(value)
+
+# @unique
+# class PublicKeyCredentialType(_StringEnum):
+#     PUBLIC_KEY = "public-key"
+#     PASSWORD = "password"
+
+# class PublicKeyCredentialParameters(_DataObject):
+#     def __init__(self, type, alg):
+#         super(PublicKeyCredentialParameters, self).__init__(
+#             type=PublicKeyCredentialType(type), alg=alg
+#         )
 
 ITERATIONS = 4096
 class HanPassServer(Fido2Server):
@@ -81,6 +103,7 @@ class HanPassServer(Fido2Server):
                         except _InvalidSignature:
                             continue
                         return cred
+                raise ValueError("Wrong PW")
 
         raise ValueError("Unknown credential ID.")
 

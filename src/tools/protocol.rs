@@ -1,6 +1,6 @@
 
 /*
- * NIPP for generating proofs
+ * NIPP algorithms for generating proofs
 **/
 
 use chrono::{DateTime, Utc};
@@ -28,7 +28,6 @@ static ITERATIONS: usize = 100_000;
 // static FILENAME: &str = "./test/result/rusttest.txt";
 
 pub fn setup(password: &[u8]) -> (Vec<u8>,(Vec<u8>, Vec<u8>)) {
-        log!("---SETUP START---");
     let salt = get_random();
     let (sk, pk) = keyconstruct(password, &salt);
     let pp = salt;
@@ -56,30 +55,11 @@ pub fn signprime(sk: EcKey<Private>, m: &[u8]) -> Vec<u8>  {
 }
 
 pub fn prove(password: &[u8], pp: &[u8], message: &[u8]) -> Vec<u8> {
-        let mut FILENAME: String = "./result".to_owned();
-        FILENAME.push_str(ITERATIONS.to_string().as_str());
-        FILENAME.push_str(".txt");
-        let mut file = File::options()
-        .write(true)
-        .append(true)
-        .create(true)
-        .open(FILENAME.as_str())
-        .unwrap();
-
     let salt = pp;
-        let key_start = Instant::now();
     let (sk, pk) = keyconstruct(password ,salt);
-        let key_end = Instant::now();
-
-        let sign_start = Instant::now();
     let signprime = signprime(sk, message);
-        let sign_end = Instant::now();
-        
-        writeln!(file, "{:?} {:?}", key_end.duration_since(key_start).as_millis(), sign_end.duration_since(sign_start).as_micros());
-
     let proof = signprime;
     proof
-
 }
 
 pub fn get_random() -> Vec<u8> {
@@ -91,11 +71,8 @@ pub fn get_random() -> Vec<u8> {
 pub fn get_randomp() -> Vec<u8> {
     let mut rng = rand::thread_rng();
     let k_u16 :u16 = rng.gen_range(0..4095);
-    // let u1 : u8 = ((k_u32 >> 24) & 0xff) as u8;
-    // let u2 : u8 = ((k_u32 >> 16) & 0xff) as u8;
     let u1 : u8 = ((k_u16 >> 8) & 0xff) as u8;
     let u2 : u8 = (k_u16 & 0xff) as u8;
-    // [u1, u2, u3, u4].to_vec()
     [u1, u2].to_vec()
 }
 

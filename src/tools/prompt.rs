@@ -21,8 +21,8 @@ pub fn get_password(prompt: &str)
     let escaped = escape_string(prompt);
     std::thread::spawn(move || {
         let peb = pinentry_rs::pinentry().description(escaped);
-        let r = peb.pin((&"HanPass").to_string());
-        // let r = random_password();
+        // let r = peb.pin((&"HanPass").to_string());
+        let r = test_password();
         sender.send(r)//.unwrap()
     });
     receiver
@@ -31,5 +31,10 @@ pub fn get_password(prompt: &str)
 pub fn random_password() -> Result<secstr::SecVec<u8>, pinentry_rs::Error> {
     let mut bytes : Vec<u8> = [0u8;10].to_vec();
     rand_bytes(&mut bytes).unwrap();
+    Ok(SecVec::new(bytes.to_vec()))
+}
+
+pub fn test_password() -> Result<secstr::SecVec<u8>, pinentry_rs::Error> {
+    let mut bytes : Vec<u8> = [0u8;10].to_vec();
     Ok(SecVec::new(bytes.to_vec()))
 }
