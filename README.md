@@ -24,8 +24,10 @@ python3 test/ctap2.py
 
 ## Test with browser
 
-https://sflab.snu.ac.kr:89 create and login.
-Warning: Firefox does not support FIDO2 yet
+<s>https://sflab.snu.ac.kr:89 create and login.
+Warning: Firefox does not support FIDO2 yet</s>
+
+Currently the website is down.
 
 
 # References
